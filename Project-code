@@ -1,2 +1,131 @@
-# Sample code
+# Virginia MYA Prices
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(openxlsx)
+library(ggplot2)
+library(forecast)      
+library(ggfortify)      
+library(gridExtra) 
+library(pastecs)
+library(dplyr)
+library(lubridate)
+library(zoo)
+```
+
+## Virginia Market Year Avg for Corn ##
+
+```{r}
+price <- openxlsx::read.xlsx( "C:/Users/fairb/Downloads/Capstone - Data.xlsx" , sheet = 1)
+corn.price <- ts(price$Virginia.MYA.Price, start=1950, frequency =1 )
+```
+
+## Graph of Corn Market Year Avg ##
+```{r}
+g1<- autoplot(corn.price) + labs(y= "CORN Market Year Average $", x = "Year", title= "Virginia Corn Prices 1950 to Present")
+g2 <- ggAcf(corn.price)
+gridExtra::grid.arrange(g1,g2,ncol =1)
+```
+## Stats ##
+```{r}
+stat.desc(corn.price)
+```
+## Plot with Trend Line ##
+```{r}
+trend <- time(corn.price)
+CPT <- lm(corn.price ~ trend)
+
+plot(corn.price, main = "Corn Price W/ Trend Line", ylab = "Price", xlab = "Year")
+abline(CPT, col = "blue", lwd = 2)
+```
+## Monthly National Corn Prices ##
+```{r}
+monthlyprice <- openxlsx::read.xlsx( "C:/Users/fairb/Downloads/Capstone - Data.xlsx" , sheet = 3,)
+
+
+monthlyprice <- monthlyprice[nrow(monthlyprice):1, ]
+
+monthlyprice$Date <- as.Date(monthlyprice$Date, origin = "1899-12-30")
+
+str(monthlyprice)
+tsprice<-ts(monthlyprice[,2], start=c(1950,1), end=c(2025,5), frequency=12)
+tsprice
+
+```
+
+## Plot of National Corn Prices ##
+```{r}
+
+
+plot(tsprice, main = "National Corn Prices ", ylab = "Price", xlab = "Year")
+
+```
+
+## ACF & Subseries Plot ##
+```{r}
+
+g1 <- ggAcf(tsprice)
+
+g2 <- ggsubseriesplot(tsprice)
+
+gridExtra::grid.arrange(g1,g2, ncol = 1)
+
+##The bottom graph shows that price spikes occur regularly throughout the year. The top graph confirms this with strong autocorrelation at regular lags, indicating seasonal trends in the price data. Together, they suggest the price follows a predictable, repeating pattern, likely driven by monthly or seasonal events.
+```
+## Top 5 Months of Prices ##
+```{r}
+top_n_months <- monthlyprice %>%
+  arrange(desc(Price)) %>%   
+  slice_head(n = 5)          
+
+print(top_n_months)
+```
+
+## Highest Monthly Price & Mean ##
+```{r}
+mean(tsprice)
+
+highest <- monthlyprice %>%
+  filter(Price == max(Price, na.rm = TRUE))
+
+print(highest)
+```
+
+## Seasonal Decomposition ##
+
+```{r}
+decomp <- stl(tsprice, s.window = "periodic")
+autoplot(decomp)
+```
+## Boxplot for Each Month ##
+```{r}
+data <- monthlyprice %>%
+  mutate(Month = month(Date, label = TRUE),
+         Year = year(Date))
+
+ggplot(data, aes(x = Month, y = Price)) +
+  geom_boxplot(fill = "lightblue") +
+  ggtitle("Monthly Price Distribution") +
+  ylab("Price") + xlab("Month")
+
+##May, December, and April appear to have slightly higher medians and wider spread, suggesting: Prices tend to be higher or more volatile in these months.January through March tend to have lower or more stable prices.Months like October and December have frequent outliers, implying occasional price surges (possibly linked to seasonal demand).
+
+```
+## Ranking Monthly Avg ##
+```{r}
+
+data1 <- monthlyprice %>%
+  mutate(Month = month(Date, label = TRUE, abbr = TRUE))
+
+
+monthly_avg <- data1 %>%
+  group_by(Month) %>%
+  summarise(Avg_Price = mean(Price, na.rm = TRUE)) %>%
+  arrange(desc(Avg_Price))
+
+print(monthly_avg)
+
+```
+
+
 # project code
