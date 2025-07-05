@@ -12,7 +12,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 # Install packages
-install.packages(c("lubridate", "mgcv", "tidyverse", "rnassqs"))
+install.packages(c("lubridate", "mgcv", "tidyverse", "rnassqs", "broom", "gt"))
 ```
 
 ```{r}
