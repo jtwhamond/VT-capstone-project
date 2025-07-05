@@ -1,0 +1,309 @@
+---
+title: "Finding Extreme Heat Temperature Thresholds for Corn in Virginia"
+output: 
+  html_document:
+    df_print: paged
+    encoding: UTF-8
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Install packages
+install.packages(c("lubridate", "mgcv", "tidyverse", "rnassqs"))
+```
+
+```{r}
+library(purrr)
+library(lubridate)
+library(mgcv)
+library(tidyverse)
+library(rnassqs)
+years <- 2000:2024  # Adjust range if needed
+
+yield_data_list <- list()
+
+for (y in years) {
+  params <- list(
+    source_desc = "SURVEY",
+    commodity_desc = "CORN",
+    statisticcat_desc = "YIELD",
+    unit_desc = "BU / ACRE",
+    agg_level_desc = "COUNTY",
+    state_alpha = "VA",
+    year = as.character(y)
+  )
+  
+  result <- tryCatch(nassqs(params), error = function(e) {
+    message(paste("Failed in year", y, ":", e$message))
+    NULL
+  })
+  
+  if (!is.null(result)) {
+    yield_data_list[[as.character(y)]] <- result
+  }
+}
+
+# Combine after loop finishes
+yield_data_all <- bind_rows(yield_data_list)
+```
+
+```{r}
+yield_df <- yield_data_all %>%
+  select(year = year, county = county_name, yield = Value) %>%
+  mutate(
+    year = as.integer(year),
+    corn_yield = as.numeric(gsub(",", "", yield))
+  ) %>%
+  select(-yield) %>%
+  filter(!str_detect(tolower(county), "combined|other|total"))
+```
+
+```{r}
+# Define County-Station Mapping
+station_to_county <- tribble(
+  ~station,                         ~county,
+  "ONLEY",                          "ACCOMACK",
+  "BOWLING GREEN",                  "CAROLINE",
+  "STAUNTON WATER TREATMENT PLANT", "AUGUSTA",
+  "HOLLAND 1 E",                    "SOUTHAMPTON",
+  "WALKERTON",                      "ESSEX",
+  "DALE ENTERPRISE",               "ROCKINGHAM",
+  "WOODSTOCK",                      "SHENANDOAH",
+  "LURAY 5 E",                      "PAGE"
+)
+
+```
+
+
+
+```{r}
+# Weather Aggregation Example
+# Load your large NOAA daily weather file
+weather_raw <- read_csv("C:/Users/gturn/OneDrive/Masters School/Summer 2025/datasets/Daily Temperature Data VA Counties.csv")
+
+# Clean and prepare it
+weather_clean <- weather_raw %>%
+  mutate(
+    station = toupper(str_extract(NAME, "^[^,]+"))  # Extract NOAA station name from NAME
+  ) %>%
+  left_join(station_to_county, by = "station") %>%
+  filter(!is.na(county)) %>%                        # Keep only mapped stations
+  mutate(
+    date = mdy(DATE),
+    year = year(date),
+    month = month(date),
+    tmax_F = TMAX,
+    tmin_F = TMIN,
+    prcp_inches = PRCP / 100
+  ) %>%
+  filter(month %in% 4:8)                             # April–August window
+```
+
+```{r}
+library(broom)
+library(gt)
+# 1. Count days above 29°C (≈ 84.2°F) for April–August
+heat_day_counts <- weather_clean %>%
+  filter(month %in% 4:8) %>%
+  group_by(county, year, month) %>%
+  summarise(days_above_29C = sum(tmax_F > 84.2, na.rm = TRUE), .groups = "drop")
+
+# 2. Bin Tmax values from 82.4°F to 93.2°F (~28°C to 34°C)
+weather_bins <- weather_clean %>%
+  filter(month %in% 4:8) %>%
+  mutate(temp_bin = cut(tmax_F, breaks = seq(82.4, 93.2, by = 1.8), right = TRUE)) %>%
+  group_by(county, year, temp_bin) %>%
+  summarise(days_in_bin = n(), .groups = "drop") %>%
+  pivot_wider(
+    names_from = temp_bin,
+    values_from = days_in_bin,
+    values_fill = 0,
+    names_prefix = "bin_"
+  )
+
+# 3. Make column names valid for use in formulas
+colnames(weather_bins) <- make.names(colnames(weather_bins), unique = TRUE)
+
+# 4. Merge with yield data (after renaming)
+model_data <- left_join(yield_df, weather_bins, by = c("county", "year"))
+
+# 5. Identify columns representing bin counts
+bin_vars <- grep("^bin_", names(model_data), value = TRUE)
+
+# 🚨 Check to make sure we found bin variables
+if (length(bin_vars) == 0) {
+  stop("No bin columns found — check your pivot_wider or column name prefix.")
+}
+
+# 6. Build the GAM formula
+gam_formula <- as.formula(
+  paste(
+    "corn_yield ~",
+    paste0("s(", bin_vars, ")", collapse = " + "),
+    "+ s(year)"
+  )
+)
+
+# 7. Fit the GAM
+gam_corn <- gam(gam_formula, data = model_data)
+gam_summary <- tidy(gam_corn)
+
+# Optional: Clean term names (for bin readability)
+gam_summary <- gam_summary %>%
+  mutate(
+    term = str_replace_all(term, "s\\((.*?)\\)", "\\1"),   # Remove 's(...)'
+    term = str_replace_all(term, "\\.", "–"),               # Replace . with dash
+    term = str_replace(term, "bin_NA", "Bin NA"),
+    term = str_replace_all(term, "bin_91–4–93–2", "91.4–93.2°F"),  # example relabel
+    term = str_replace_all(term, "year", "Year")
+  )
+
+gam_summary %>%
+  select(term, edf, statistic, p.value) %>%
+  mutate(
+    `EDF` = round(edf, 2),
+    `F value` = round(statistic, 2),
+    `p-value` = format.pval(p.value, digits = 3, eps = .001)
+  ) %>%
+  select(Term = term, EDF, `F value`, `p-value`) %>%
+  gt() %>%
+  tab_header(
+    title = md("**GAM Summary: Effect of Heat Bins on Corn Yield**")
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(columns = vars(`p-value`), rows = as.numeric(`p-value`) < 0.05)
+  )
+
+```
+
+
+```{r}
+# Set larger margins for visibility
+par(mfrow = c(1, 1), mar = c(5, 5, 4, 2) + 0.1)
+
+# Manually define temperature ranges from your cut() call
+bin_labels <- c(
+  "(82.4–84.2°F)", "(84.2–86°F)", "(86–87.8°F)",
+  "(87.8–89.6°F)", "(89.6–91.4°F)", "(91.4–93.2°F)"
+)
+
+# Loop through and plot each smoother on its own panel
+for (i in seq_along(bin_labels)) {
+  plot(
+    gam_corn,
+    select = i,
+    se = TRUE,
+    shade = TRUE,
+    main = paste("Effect of", bin_labels[i], "on Corn Yield"),
+    xlab = "Days in Temperature Bin",
+    ylab = "Partial Effect on Yield",
+    cex.main = 1.5,
+    cex.lab = 1.3,
+    cex.axis = 1.1
+  )
+}
+```
+
+
+```{r}
+# Count of Hot Days per Month from 1950-2024
+monthly_heat_days <- weather_clean %>%
+  filter(tmax_F > 84.2) %>%
+  group_by(year, month) %>%
+  summarise(hot_days = n(), .groups = "drop")
+summary(monthly_heat_days)
+```
+
+```{r}
+# Visualize the distribution over time
+# Create a named vector for month labels
+month_labels <- c("4" = "April", "5" = "May", "6" = "June", 
+                  "7" = "July", "8" = "August")
+
+# Plot with custom labels
+ggplot(monthly_heat_days, aes(x = year, y = hot_days, color = factor(month))) +
+  geom_line(size = 1.2) +
+  scale_color_manual(values = RColorBrewer::brewer.pal(5, "Set1"),
+                     labels = month_labels) +
+  labs(
+    title = "Trend in Extreme Heat Days (Tmax > 84.2°F) by Month",
+    x = "Year",
+    y = "Number of Days",
+    color = "Month"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+
+
+```{r}
+# Count Days above 91.4 degrees
+monthly_extreme_days <- weather_clean %>%
+  filter(tmax_F >= 91.4) %>%
+  group_by(year, month) %>%
+  summarise(extreme_days = n(), .groups = "drop")
+
+# Plot
+# Create month name labels
+month_labels <- c("4" = "April", "5" = "May", "6" = "June", 
+                  "7" = "July", "8" = "August")
+
+# Visualize the trend in extreme heat days
+ggplot(monthly_extreme_days, aes(x = year, y = extreme_days, color = factor(month))) +
+  geom_line(size = 1.2) +
+  scale_color_manual(
+    values = RColorBrewer::brewer.pal(5, "Set1"),
+    labels = month_labels
+  ) +
+  labs(
+    title = "Trend in Extreme Heat Days (Tmax ≥ 91.4°F) by Month",
+    x = "Year",
+    y = "Number of Days ≥ 91.4°F",
+    color = "Month"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+```{r}
+# Total count of extreme heat days by month
+monthly_totals_extreme <- weather_clean %>%
+  filter(tmax_F >= 91.4) %>%
+  group_by(month) %>%
+  summarise(total_days = n(), .groups = "drop") %>%
+  mutate(month_name = month.abb[month]) %>%
+  arrange(month)
+
+print(monthly_totals_extreme)
+```
+
+```{r}
+# Filter for July (7) and August (8) only
+jul_aug_extreme <- weather_clean %>%
+  filter(tmax_F >= 91.4, month %in% c(7, 8)) %>%
+  group_by(year, month) %>%
+  summarise(extreme_days = n(), .groups = "drop")
+
+# Month labels
+month_labels <- c("7" = "July", "8" = "August")
+
+# Plot
+ggplot(jul_aug_extreme, aes(x = year, y = extreme_days, color = factor(month))) +
+  geom_line(size = 1.2) +
+  geom_smooth(method = "lm", se = FALSE, linetype = "dashed", color = "gray30") +
+  scale_color_manual(
+    values = c("7" = "#D55E00", "8" = "#0072B2"),
+    labels = month_labels
+  ) +
+  labs(
+    title = "Trend in Extreme Heat Days (≥ 91.4°F) in July & August",
+    x = "Year",
+    y = "Number of Days ≥ 91.4°F",
+    color = "Month"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
