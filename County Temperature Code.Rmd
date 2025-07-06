@@ -207,7 +207,94 @@ for (i in seq_along(bin_labels)) {
   )
 }
 ```
+```{r}
+temp_bins_simple <- weather_clean %>%
+  filter(month %in% 4:8) %>%
+  mutate(
+    heat_bin = ifelse(tmax_F >= 91.4, "Extreme_Heat", "Moderate_Temperature")
+  ) %>%
+  group_by(county, year, heat_bin) %>%
+  summarise(days_in_bin = n(), .groups = "drop") %>%
+  pivot_wider(
+    names_from = heat_bin,
+    values_from = days_in_bin,
+    values_fill = 0
+  )
 
+model_data_simple <- left_join(yield_df, temp_bins_simple, by = c("county", "year"))
+
+gam_simple <- gam(
+  corn_yield ~ s(`Moderate_Temperature`) + s(`Extreme_Heat`) + s(year),
+  data = model_data_simple
+)
+
+# Tidy the GAM summary
+gam_summary_simple <- tidy(gam_simple)
+
+# Clean term labels
+gam_summary_simple <- gam_summary_simple %>%
+  mutate(
+    term = str_replace_all(term, "s\\((.*?)\\)", "\\1"),
+    term = str_replace_all(term, "Moderate_Temp", "Moderate Temperature"),
+    term = str_replace_all(term, "Extreme_Heat", "Extreme Heat"),
+    term = str_replace_all(term, "year", "Year")
+  )
+
+# Format and display table
+gam_summary_simple %>%
+  select(term, edf, statistic, p.value) %>%
+  mutate(
+    `EDF` = round(edf, 2),
+    `F value` = round(statistic, 2),
+    `p-value` = format.pval(p.value, digits = 3, eps = .001)
+  ) %>%
+  select(Term = term, EDF, `F value`, `p-value`) %>%
+  gt() %>%
+  tab_header(
+    title = md("**GAM Summary: Effect of Moderate & Extreme Heat on Corn Yield**")
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_body(columns = vars(`p-value`), rows = as.numeric(`p-value`) < 0.05)
+  )
+
+```
+
+```{r}
+# Set margins and layout
+par(mfrow = c(1, 1), mar = c(5, 5, 4, 2) + 0.1)
+
+# Define clean labels
+smooth_labels <- c("Moderate Temperatures (< 91.4°F)", "Extreme Heat (≥ 91.4°F)")
+
+# Plot Moderate_Temp (select = 1)
+plot(
+  gam_simple,
+  select = 1,
+  se = TRUE,
+  shade = TRUE,
+  main = paste("Effect of", smooth_labels[1], "on Corn Yield"),
+  xlab = "Days in Moderate Temperature Bin",
+  ylab = "Partial Effect on Yield",
+  cex.main = 1.5,
+  cex.lab = 1.3,
+  cex.axis = 1.1
+)
+
+# Plot Extreme_Heat (select = 2)
+plot(
+  gam_simple,
+  select = 2,
+  se = TRUE,
+  shade = TRUE,
+  main = paste("Effect of", smooth_labels[2], "on Corn Yield"),
+  xlab = "Days in Extreme Heat Bin",
+  ylab = "Partial Effect on Yield",
+  cex.main = 1.5,
+  cex.lab = 1.3,
+  cex.axis = 1.1
+)
+```
 
 ```{r}
 # Count of Hot Days per Month from 1950-2024
