@@ -1,0 +1,498 @@
+---
+title: "Virginia yields"
+author: "Group 2"
+date: "2025-07-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+
+```{r}
+# Load required libraries
+library(tidyverse) 
+library(ggplot2)    
+library(lubridate)  
+library(caret)     
+library(stargazer)
+
+```
+
+
+
+
+```{r}
+
+# Virginia field crop general condition reports
+# https://quickstats.nass.usda.gov/
+
+field <- read.csv('https://drive.google.com/uc?id=1XFpXjZ1aZljRaKmz8XMaoqiuz11fHeN9') %>% 
+  select('Week.Ending', Period, State, 'Data.Item', Value)
+
+field
+
+
+```
+
+```{r}
+
+field_wide <- field %>% pivot_wider(names_from = 'Data.Item',
+                                    values_from = Value)
+
+field_wide
+
+
+```
+
+
+```{r}
+
+temp <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-tmpcst-v1.0.0-20250605')
+
+colnames(temp) <- c('Code', 
+                'Jan_temp',
+                'Feb_temp', 
+                'Mar_temp',
+                'Apr_temp',
+                'May_temp',
+                'Jun_temp',
+                'Jul_temp',
+                'Aug_temp', 
+                'Sep_temp',
+                'Oct_temp', 
+                'Nov_temp', 
+                'Dec_temp')
+
+temp_va <- temp %>% filter(str_detect(as.character(Code), '44002'))
+temp_va <- temp_va %>% 
+  mutate(Year = str_sub(as.character(Code), start = -4),
+         State = "VIRGINIA") %>% 
+  mutate(Year = as.numeric(Year)) %>% 
+  filter(Year > 1979)
+
+
+```
+
+
+```{r}
+
+prec <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-pcpnst-v1.0.0-20250605')
+
+colnames(prec) <- c('Code', 
+                'Jan_prec',
+                'Feb_prec', 
+                'Mar_prec', 
+                'Apr_prec', 
+                'May_prec',
+                'Jun_prec',
+                'Jul_prec', 
+                'Aug_prec',
+                'Sep_prec',
+                'Oct_prec', 
+                'Nov_prec',
+                'Dec_prec')
+
+prec_va <- prec %>% filter(str_detect(as.character(Code), '44001'))
+prec_va <- prec_va %>% 
+  mutate(Year = str_sub(as.character(Code), start = -4),
+         State = "VIRGINIA") %>% 
+  mutate(Year = as.numeric(Year)) %>% 
+  filter(Year > 1979)
+
+
+```
+
+```{r}
+
+sp01 <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-sp01st-v1.0.0-20250605')
+
+colnames(sp01) <- c('Code', 
+                'Jan_sp01', 
+                'Feb_sp01', 
+                'Mar_sp01', 
+                'Apr_sp01', 
+                'May_sp01', 
+                'Jun_sp01', 
+                'Jul_sp01',
+                'Aug_sp01',
+                'Sep_sp01',
+                'Oct_sp01', 
+                'Nov_sp01', 
+                'Dec_sp01')
+
+sp01_va <- sp01 %>% filter(str_detect(as.character(Code), '44071'))
+sp01_va <- sp01_va %>% 
+  mutate(Year = str_sub(as.character(Code), start = -4),
+         State = "VIRGINIA") %>% 
+  mutate(Year = as.numeric(Year)) %>% 
+  filter(Year > 1979)
+
+
+
+
+```
+
+```{r}
+
+phdi <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-phdist-v1.0.0-20250605')
+
+colnames(phdi) <- c('Code', 
+                'Jan_phdi', 
+                'Feb_phdi', 
+                'Mar_phdi', 
+                'Apr_phdi', 
+                'May_phdi', 
+                'Jun_phdi', 
+                'Jul_phdi',
+                'Aug_phdi',
+                'Sep_phdi',
+                'Oct_phdi', 
+                'Nov_phdi', 
+                'Dec_phdi')
+
+phdi_va <- phdi %>% filter(str_detect(as.character(Code), '44006'))
+phdi_va <- phdi_va %>% 
+  mutate(Year = str_sub(as.character(Code), start = -4),
+         State = "VIRGINIA") %>% 
+  mutate(Year = as.numeric(Year)) %>% 
+  filter(Year > 1979)
+
+
+```
+
+
+```{r}
+
+# Virginia corn harvest and yield
+# https://quickstats.nass.usda.gov/
+
+corn <- read.csv('https://drive.google.com/uc?id=1vLCIQOVkeEfxCKr4GfTDKVRsJtBfgz-n') %>% 
+  select(Year, Period, State, 'Data.Item', Value) %>% 
+  filter(State == "VIRGINIA" & Period == "YEAR")
+
+corn
+
+
+```
+
+```{r}
+# working dataset
+
+# Merging datasets
+corn_test <- corn %>% filter(Data.Item == "CORN, GRAIN - YIELD, MEASURED IN BU / ACRE") %>% 
+  left_join(temp_va, by = c("Year", "State"))
+corn_test <- left_join(corn_test, prec_va, by = c("Year", "State"))
+corn_test <- left_join(corn_test, sp01_va, by = c("Year", "State"))
+corn_test <- left_join(corn_test, phdi_va, by = c("Year", "State"))
+
+
+# Creating squared precipitation variables
+corn_test <- corn_test %>% 
+  mutate(Jun_prec_sq = Jun_prec^2, 
+         Jul_prec_sq = Jul_prec^2, 
+         Aug_prec_sq = Aug_prec^2)
+
+# Merging with merged_wide and filtering
+# soybean_test_wide <- left_join(soybean_test, field_wide, by = c("Year", "State"), all = TRUE)
+# soybean_test_wide <- soybean_test_wide[soybean_test_wide$State == "VIRGINIA" & soybean_test_wide$Year < 2025]
+
+# Removing columns with any NA values
+# soybean_test_wide <- soybean_test_wide[, colSums(is.na(soybean_test_wide)) == 0]
+
+# Split training and testing datasets
+corn_test_A <- corn_test %>%  filter(Year < 2021)
+corn_test_B <- corn_test %>%  filter(Year > 2020)
+
+```
+
+
+```{r}
+
+vars <- colnames(corn_test)
+
+corn_replicate <- corn_test %>%  select('Year', 
+                                          'Period',
+                                          'State', 
+                                          'Data.Item', 
+                                          'Value', 
+                                          'Jul_temp', 
+                                          'Jul_prec', 
+                                          'Jul_prec_sq', 
+                                          'Jun_sp01', 
+                                          'Jul_sp01')
+
+
+```
+
+```{r}
+
+rep_vars <- c('Jul_temp', 
+              'Jul_prec', 
+              'Jul_prec_sq',
+              'Jun_sp01', 
+              'Jul_sp01')
+
+
+y = corn_replicate %>%  select(Value)
+X = corn_replicate %>%  select(rep_vars)
+
+# X = sm.add_constant(X)
+
+model = lm(Value ~ Jul_temp + Jul_prec + Jul_prec_sq + Jun_sp01 + Jul_sp01, corn_replicate)
+
+
+summary(model)
+
+stargazer(model, type = "text", digits = 2, title = "Linear Regression Results")
+
+
+
+```
+
+```{r}
+
+results <- predict(model, X)
+
+corn_replicate_accuracy <- corn_replicate %>% cbind(results)
+
+corn_replicate_accuracy %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = results)) + 
+  labs(title = "Westcott & Jewison - model replication in VA",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+
+```
+
+```{r}
+
+corn_replicate_accuracy <- corn_replicate_accuracy %>% 
+  mutate(AE = abs(as.numeric(Value) - results),
+         APE = abs((as.numeric(Value) - results) / as.numeric(Value) * 100))
+
+paste0("Mean Absolute Error: ", mean(corn_replicate_accuracy$AE))
+
+paste0("Mean Absolute Percentage Error: ", mean(corn_replicate_accuracy$APE))
+
+```
+
+```{r}
+
+y_test = corn_test_A %>%  select(Value)
+X_test = corn_test_A %>%  select(rep_vars)
+
+# X = sm.add_constant(X)
+
+model_test = lm(Value ~ Jul_temp + Jul_prec + Jul_prec_sq + Jun_sp01 + Jul_sp01, corn_test_A)
+
+
+summary(model_test)
+
+```
+
+```{r}
+
+results_test_A <- predict(model_test, X_test)
+
+corn_test_A_accuracy <- corn_test_A %>% cbind(results_test_A)
+
+corn_test_A_accuracy %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = results_test_A)) + 
+  labs(title = "Model revision - train set",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+#
+
+corn_test_A_accuracy <- corn_test_A_accuracy %>% 
+  mutate(AE = abs(as.numeric(Value) - results_test_A),
+         APE = abs((as.numeric(Value) - results_test_A) / as.numeric(Value) * 100))
+
+paste0("Mean Absolute Error: ", mean(corn_test_A_accuracy$AE))
+
+paste0("Mean Absolute Percentage Error: ", mean(corn_test_A_accuracy$APE))
+
+
+
+
+```
+
+```{r}
+
+results_test_B <- predict(model_test, corn_test_B)
+
+corn_test_B_accuracy <- corn_test_B %>% cbind(results_test_B)
+
+corn_test_B_accuracy %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = results_test_B)) + 
+    labs(title = "Model revision - test set",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+
+#
+
+corn_test_B_accuracy <- corn_test_B_accuracy %>% 
+  mutate(AE = abs(as.numeric(Value) - results_test_B),
+         APE = abs((as.numeric(Value) - results_test_B) / as.numeric(Value) * 100))
+
+paste0("Mean Absolute Error: ", mean(corn_test_B_accuracy$AE))
+
+paste0("Mean Absolute Percentage Error: ", mean(corn_test_B_accuracy$APE))
+
+
+```
+
+
+```{r}
+
+set.seed(320)
+
+# Recursive feature elimination with cross-validation
+X <- corn_test_A %>% select(all_of(vars)) %>% mutate_all(as.numeric) %>% 
+  select(-c(Value, Period, State, Data.Item, Code.x, Code.y, Code.x.x, Code.y.y))
+y <- corn_test_A %>% pull(Value) %>% as.numeric()
+
+# Define the control for RFE with time series cross-validation
+ctrl <- rfeControl(
+  functions = lmFuncs,
+  method = "cv",
+  number = 5,
+  verbose = FALSE
+)
+
+# Perform RFE with cross-validation
+rfecv <- rfe(
+  x = X,
+  y = y,
+  sizes = 1:ncol(X),
+  rfeControl = ctrl,
+  metric = "MAE"
+)
+
+# Extract optimal features
+optimal_features <- predictors(rfecv)
+cat("Optimal features:", optimal_features, "\n")
+cat("Number of optimal features:", rfecv$optVariables %>% length(), "\n")
+
+# Select optimal features for final model
+X_optimal <- X %>% select(all_of(optimal_features))
+
+# Train final linear model
+final_model <- train(
+  x = X_optimal,
+  y = y,
+  method = "lm",
+  trControl = trainControl(method = "none")
+)
+
+# Make predictions and calculate metrics
+predictions <- predict(final_model, X_optimal)
+mae <- mean(abs(y - predictions))
+mape <- mean(abs((y - predictions) / y)) * 100
+
+paste0("Mean Absolute Error on training data:", mae)
+paste0("Mean Absolute Percentage Error on training data:", mape)
+
+final_model$finalModel
+
+summary(final_model)
+
+stargazer(final_model$finalModel, type = "text", digits = 2, title = "Linear Regression Results")
+
+
+```
+
+```{r}
+
+corn_test_A2 <- corn_test_A %>% cbind(predictions)
+
+corn_test_A2 %>% ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = predictions)) + 
+  labs(title = "Model optimization - train set",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+
+
+
+```
+
+```{r}
+
+predictionsB <- predict(final_model, corn_test_B)
+
+corn_test_B_accuracy <- corn_test_B %>% cbind(predictionsB)
+
+corn_test_B_accuracy %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = predictionsB)) + 
+  labs(title = "Model optimization - test set",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+#
+
+corn_test_B_accuracy <- corn_test_B_accuracy %>% 
+  mutate(AE = abs(as.numeric(Value) - predictionsB),
+         APE = abs((as.numeric(Value) - predictionsB) / as.numeric(Value) * 100))
+
+paste0("Mean Absolute Error: ", mean(corn_test_B_accuracy$AE))
+
+paste0("Mean Absolute Percentage Error: ", mean(corn_test_B_accuracy$APE))
+  
+
+```
+
+
+```{r}
+
+VA_select <- lm(Value ~ Jul_prec + Jul_prec_sq + Jul_sp01, corn_test_A)
+
+summary(VA_select)
+
+VA_test_A <- predict(VA_select, X_test)
+
+corn_VA_accuracy <- corn_test_A %>% cbind(VA_test_A)
+
+corn_VA_accuracy %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = results_test_A)) + 
+  labs(title = "Model selection - train test",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+
+results_VA_B <- predict(VA_select, corn_test_B)
+
+corn_VA_accuracy_B <- corn_test_B %>% cbind(results_VA_B)
+
+corn_VA_accuracy_B %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = results_test_B)) + 
+    labs(title = "Model selection - test set",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+
+```
+
