@@ -15,7 +15,9 @@ knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
 library(tidyverse) 
 library(ggplot2)    
 library(lubridate)  
-library(caret)     
+library(caret)
+library(fable)
+library(forecast)
 library(stargazer)
 
 ```
@@ -49,7 +51,7 @@ field_wide
 
 ```{r}
 
-temp <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-tmpcst-v1.0.0-20250605')
+temp <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-tmpcst-v1.0.0-20250707')
 
 colnames(temp) <- c('Code', 
                 'Jan_temp',
@@ -78,7 +80,7 @@ temp_va <- temp_va %>%
 
 ```{r}
 
-prec <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-pcpnst-v1.0.0-20250605')
+prec <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-pcpnst-v1.0.0-20250707')
 
 colnames(prec) <- c('Code', 
                 'Jan_prec',
@@ -106,7 +108,7 @@ prec_va <- prec_va %>%
 
 ```{r}
 
-sp01 <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-sp01st-v1.0.0-20250605')
+sp01 <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-sp01st-v1.0.0-20250707')
 
 colnames(sp01) <- c('Code', 
                 'Jan_sp01', 
@@ -136,7 +138,7 @@ sp01_va <- sp01_va %>%
 
 ```{r}
 
-phdi <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-phdist-v1.0.0-20250605')
+phdi <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-phdist-v1.0.0-20250707')
 
 colnames(phdi) <- c('Code', 
                 'Jan_phdi', 
@@ -304,7 +306,7 @@ corn_test_A_accuracy <- corn_test_A %>% cbind(results_test_A)
 corn_test_A_accuracy %>% 
   ggplot(aes(x = Year, y = as.numeric(Value))) + 
   geom_line() + 
-  geom_line(aes(y = results_test_A)) + 
+  geom_line(aes(y = results_test_A, colour = "red")) + 
   labs(title = "Model revision - train set",
        x = "Year",
        y = "Yield (bu/ac)") + 
@@ -334,7 +336,7 @@ corn_test_B_accuracy <- corn_test_B %>% cbind(results_test_B)
 corn_test_B_accuracy %>% 
   ggplot(aes(x = Year, y = as.numeric(Value))) + 
   geom_line() + 
-  geom_line(aes(y = results_test_B)) + 
+  geom_line(aes(y = results_test_B, color = "red")) + 
     labs(title = "Model revision - test set",
        x = "Year",
        y = "Yield (bu/ac)") + 
@@ -420,7 +422,7 @@ corn_test_A2 <- corn_test_A %>% cbind(predictions)
 
 corn_test_A2 %>% ggplot(aes(x = Year, y = as.numeric(Value))) + 
   geom_line() + 
-  geom_line(aes(y = predictions)) + 
+  geom_line(aes(y = predictions, color = "red")) + 
   labs(title = "Model optimization - train set",
        x = "Year",
        y = "Yield (bu/ac)") + 
@@ -440,7 +442,7 @@ corn_test_B_accuracy <- corn_test_B %>% cbind(predictionsB)
 corn_test_B_accuracy %>% 
   ggplot(aes(x = Year, y = as.numeric(Value))) + 
   geom_line() + 
-  geom_line(aes(y = predictionsB)) + 
+  geom_line(aes(y = predictionsB, colour = "Red")) + 
   labs(title = "Model optimization - test set",
        x = "Year",
        y = "Yield (bu/ac)") + 
@@ -492,6 +494,133 @@ corn_VA_accuracy_B %>%
        x = "Year",
        y = "Yield (bu/ac)") + 
   theme_classic()
+
+
+```
+```{r}
+
+VA_select <- lm(Value ~ Year + Apr_prec + Apr_sp01 + Jun_sp01, corn_test_A)
+
+summary(VA_select)
+
+X_test = corn_test_A %>%  select(Year, Apr_prec,  Apr_sp01, Jun_sp01)
+
+VA_test_A <- predict(VA_select, X_test)
+
+corn_VA_accuracy <- corn_test_A %>% cbind(VA_test_A)
+
+corn_VA_accuracy %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = results_test_A)) + 
+  labs(title = "Model selection - train test",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+
+results_VA_B <- predict(VA_select, corn_test_B)
+
+corn_VA_accuracy_B <- corn_test_B %>% cbind(results_VA_B)
+
+corn_VA_accuracy_B %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = results_test_B)) + 
+    labs(title = "Model selection - test set",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+```
+
+# scenarios
+
+```{r}
+
+Apr_prec_sc <- ts(corn_test$Apr_prec, start = 1980, end = 2024)
+Apr_sp01_sc <- ts(corn_test$Apr_sp01, start = 1980, end = 2024)
+Jun_sp01_sc <- ts(corn_test$Jun_sp01, start = 1980, end = 2024)
+
+Apr_prec_model <- auto.arima(Apr_prec_sc)
+Apr_sp01_model <- auto.arima(Apr_sp01_sc)
+Jun_sp01_model <- auto.arima(Jun_sp01_sc)
+
+Apr_prec_fc <- forecast(Apr_prec_model, level = 95, h = 15)
+Apr_sp01_fc <- forecast(Apr_sp01_model, level = 95, h = 15)
+Jun_sp01_fc <- forecast(Jun_sp01_model, level = 95, h = 15)
+
+autoplot(Apr_prec_fc)
+autoplot(Apr_sp01_fc)
+autoplot(Jun_sp01_fc)
+
+
+```
+
+```{r}
+
+baseline <- data.frame(Year = seq(from = 2025, to = 2039, by = 1),
+                       Apr_prec = Apr_prec_fc$mean,
+                       Apr_sp01 = Apr_sp01_fc$mean,
+                       Jun_sp01 = Jun_sp01_fc$mean)
+
+high <- data.frame(Year = seq(from = 2025, to = 2039, by = 1),
+                   Apr_prec_fc$upper,
+                   Apr_sp01_fc$upper,
+                   Jun_sp01_fc$upper) %>% 
+  dplyr::rename("Apr_prec" = "X95.",
+                "Apr_sp01" = "X95..1",
+                "Jun_sp01" = "X95..2")
+
+low <- data.frame(Year = seq(from = 2025, to = 2039, by = 1),
+                  Apr_prec = Apr_prec_fc$lower,
+                  Apr_sp01 = Apr_sp01_fc$lower,
+                  Jun_sp01 = Jun_sp01_fc$lower) %>% 
+  dplyr::rename("Apr_prec" = "X95.",
+                "Apr_sp01" = "X95..1",
+                "Jun_sp01" = "X95..2")
+
+
+
+```
+
+```{r}
+
+baseline_result <- predict(VA_select, baseline)
+
+high_result <- predict(VA_select, high)
+
+low_result <- predict(VA_select, low)
+
+scenario_final <- data.frame(Year = seq(from = 2025, to = 2039, by = 1),
+                             Value = NA,
+                             baseline = baseline_result,
+                             high = high_result,
+                             low = low_result)
+
+historic <- corn_test %>% select(Year, Value) %>% 
+  mutate(Value = as.numeric(Value),
+         baseline = NA,
+         high = NA,
+         low = NA)
+
+finaldf <- bind_rows(historic, scenario_final)
+
+finaldf %>% ggplot(aes(x = Year)) + 
+  geom_line(aes(y = Value)) + 
+  geom_line(aes(y = baseline, color = "baseline")) +
+  geom_line(aes(y = high, color = "High")) + 
+  geom_line(aes(y = low, color = "Low")) + 
+  labs(title = "VA corn yield scenarios",
+       x = "Year",
+       y = "Yield") + 
+  theme_classic()
+
+
+
+```
+
+
 
 
 ```
