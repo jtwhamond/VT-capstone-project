@@ -1,0 +1,1069 @@
+---
+title: "Virginia yields"
+author: "Group 2"
+date: "2025-07-01"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+
+```{r}
+# Load required libraries
+library(tidyverse) 
+library(ggplot2)    
+library(lubridate)  
+library(caret)
+library(fable)
+library(forecast)
+library(stargazer)
+
+```
+
+
+
+
+```{r}
+
+# Virginia field crop general condition reports
+# https://quickstats.nass.usda.gov/
+
+field <- read.csv('https://drive.google.com/uc?id=1XFpXjZ1aZljRaKmz8XMaoqiuz11fHeN9') %>% 
+  dplyr::select('Week.Ending', Period, State, 'Data.Item', Value)
+
+field
+
+
+```
+
+```{r}
+
+field_wide <- field %>% pivot_wider(names_from = 'Data.Item',
+                                    values_from = Value)
+
+field_wide
+
+
+```
+
+
+```{r}
+
+temp <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-tmpcst-v1.0.0-20250707')
+
+colnames(temp) <- c('Code', 
+                'Jan_temp',
+                'Feb_temp', 
+                'Mar_temp',
+                'Apr_temp',
+                'May_temp',
+                'Jun_temp',
+                'Jul_temp',
+                'Aug_temp', 
+                'Sep_temp',
+                'Oct_temp', 
+                'Nov_temp', 
+                'Dec_temp')
+
+temp_va <- temp %>% filter(str_detect(as.character(Code), '44002'))
+temp_va <- temp_va %>% 
+  mutate(Year = str_sub(as.character(Code), start = -4),
+         State = "VIRGINIA") %>% 
+  mutate(Year = as.numeric(Year)) %>% 
+  filter(Year > 1979)
+
+
+```
+
+
+```{r}
+
+prec <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-pcpnst-v1.0.0-20250707')
+
+colnames(prec) <- c('Code', 
+                'Jan_prec',
+                'Feb_prec', 
+                'Mar_prec', 
+                'Apr_prec', 
+                'May_prec',
+                'Jun_prec',
+                'Jul_prec', 
+                'Aug_prec',
+                'Sep_prec',
+                'Oct_prec', 
+                'Nov_prec',
+                'Dec_prec')
+
+prec_va <- prec %>% filter(str_detect(as.character(Code), '44001'))
+prec_va <- prec_va %>% 
+  mutate(Year = str_sub(as.character(Code), start = -4),
+         State = "VIRGINIA") %>% 
+  mutate(Year = as.numeric(Year)) %>% 
+  filter(Year > 1979)
+
+
+```
+
+```{r}
+
+sp01 <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-sp01st-v1.0.0-20250707')
+
+colnames(sp01) <- c('Code', 
+                'Jan_sp01', 
+                'Feb_sp01', 
+                'Mar_sp01', 
+                'Apr_sp01', 
+                'May_sp01', 
+                'Jun_sp01', 
+                'Jul_sp01',
+                'Aug_sp01',
+                'Sep_sp01',
+                'Oct_sp01', 
+                'Nov_sp01', 
+                'Dec_sp01')
+
+sp01_va <- sp01 %>% filter(str_detect(as.character(Code), '44071'))
+sp01_va <- sp01_va %>% 
+  mutate(Year = str_sub(as.character(Code), start = -4),
+         State = "VIRGINIA") %>% 
+  mutate(Year = as.numeric(Year)) %>% 
+  filter(Year > 1979)
+
+
+
+
+```
+
+```{r}
+
+phdi <- read.table('https://www.ncei.noaa.gov/pub/data/cirs/climdiv/climdiv-phdist-v1.0.0-20250707')
+
+colnames(phdi) <- c('Code', 
+                'Jan_phdi', 
+                'Feb_phdi', 
+                'Mar_phdi', 
+                'Apr_phdi', 
+                'May_phdi', 
+                'Jun_phdi', 
+                'Jul_phdi',
+                'Aug_phdi',
+                'Sep_phdi',
+                'Oct_phdi', 
+                'Nov_phdi', 
+                'Dec_phdi')
+
+phdi_va <- phdi %>% filter(str_detect(as.character(Code), '44006'))
+phdi_va <- phdi_va %>% 
+  mutate(Year = str_sub(as.character(Code), start = -4),
+         State = "VIRGINIA") %>% 
+  mutate(Year = as.numeric(Year)) %>% 
+  filter(Year > 1979)
+
+
+```
+
+
+```{r}
+
+# Virginia corn harvest and yield
+# https://quickstats.nass.usda.gov/
+
+corn <- read.csv('https://drive.google.com/uc?id=1vLCIQOVkeEfxCKr4GfTDKVRsJtBfgz-n') %>% 
+  dplyr::select(Year, Period, State, 'Data.Item', Value) %>% 
+  filter(State == "VIRGINIA" & Period == "YEAR")
+
+corn
+
+
+```
+
+```{r}
+# working dataset
+
+# Merging datasets
+corn_test <- corn %>% filter(Data.Item == "CORN, GRAIN - YIELD, MEASURED IN BU / ACRE") %>% 
+  left_join(temp_va, by = c("Year", "State"))
+corn_test <- left_join(corn_test, prec_va, by = c("Year", "State"))
+corn_test <- left_join(corn_test, sp01_va, by = c("Year", "State"))
+corn_test <- left_join(corn_test, phdi_va, by = c("Year", "State"))
+
+
+# Creating squared precipitation variables
+corn_test <- corn_test %>% 
+  mutate(Jun_prec_sq = Jun_prec^2, 
+         Jul_prec_sq = Jul_prec^2, 
+         Aug_prec_sq = Aug_prec^2)
+
+# Merging with merged_wide and filtering
+# soybean_test_wide <- left_join(soybean_test, field_wide, by = c("Year", "State"), all = TRUE)
+# soybean_test_wide <- soybean_test_wide[soybean_test_wide$State == "VIRGINIA" & soybean_test_wide$Year < 2025]
+
+# Removing columns with any NA values
+# soybean_test_wide <- soybean_test_wide[, colSums(is.na(soybean_test_wide)) == 0]
+
+# Split training and testing datasets
+corn_test_A <- corn_test %>%  filter(Year < 2021)
+corn_test_B <- corn_test %>%  filter(Year > 2020)
+
+```
+
+
+```{r}
+
+vars <- colnames(corn_test)
+
+corn_replicate <- corn_test %>%  dplyr::select('Year', 
+                                          'Period',
+                                          'State', 
+                                          'Data.Item', 
+                                          'Value', 
+                                          'Jul_temp', 
+                                          'Jul_prec', 
+                                          'Jul_prec_sq', 
+                                          'Jun_sp01', 
+                                          'Jul_sp01')
+
+
+```
+
+```{r}
+
+rep_vars <- c('Jul_temp', 
+              'Jul_prec', 
+              'Jul_prec_sq',
+              'Jun_sp01', 
+              'Jul_sp01')
+
+
+y = corn_replicate %>%  dplyr::select(Value)
+X = corn_replicate %>%  dplyr::select(rep_vars)
+
+# X = sm.add_constant(X)
+
+model = lm(Value ~ Jul_temp + Jul_prec + Jul_prec_sq + Jun_sp01 + Jul_sp01, corn_replicate)
+
+
+summary(model)
+
+stargazer(model, type = "text", digits = 2, title = "Linear Regression Results")
+
+
+
+```
+
+```{r}
+
+results <- predict(model, X)
+
+corn_replicate_accuracy <- corn_replicate %>% cbind(results)
+
+corn_replicate_accuracy %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = results)) + 
+  labs(title = "Westcott & Jewison - model replication in VA",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+
+```
+
+```{r}
+
+corn_replicate_accuracy <- corn_replicate_accuracy %>% 
+  mutate(AE = abs(as.numeric(Value) - results),
+         APE = abs((as.numeric(Value) - results) / as.numeric(Value) * 100))
+
+paste0("Mean Absolute Error: ", mean(corn_replicate_accuracy$AE))
+
+paste0("Mean Absolute Percentage Error: ", mean(corn_replicate_accuracy$APE))
+
+```
+
+```{r}
+
+y_test = corn_test_A %>%  dplyr::select(Value)
+X_test = corn_test_A %>%  dplyr::select(rep_vars)
+
+# X = sm.add_constant(X)
+
+model_test = lm(Value ~ Jul_temp + Jul_prec + Jul_prec_sq + Jun_sp01 + Jul_sp01, corn_test_A)
+
+
+summary(model_test)
+
+```
+
+```{r}
+
+results_test_A <- predict(model_test, X_test)
+
+corn_test_A_accuracy <- corn_test_A %>% cbind(results_test_A)
+
+corn_test_A_accuracy %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = results_test_A, colour = "red")) + 
+  labs(title = "Model revision - train set",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+#
+
+corn_test_A_accuracy <- corn_test_A_accuracy %>% 
+  mutate(AE = abs(as.numeric(Value) - results_test_A),
+         APE = abs((as.numeric(Value) - results_test_A) / as.numeric(Value) * 100))
+
+paste0("Mean Absolute Error: ", mean(corn_test_A_accuracy$AE))
+
+paste0("Mean Absolute Percentage Error: ", mean(corn_test_A_accuracy$APE))
+
+
+
+
+```
+
+```{r}
+
+results_test_B <- predict(model_test, corn_test_B)
+
+corn_test_B_accuracy <- corn_test_B %>% cbind(results_test_B)
+
+corn_test_B_accuracy %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = results_test_B, color = "red")) + 
+    labs(title = "Model revision - test set",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+
+#
+
+corn_test_B_accuracy <- corn_test_B_accuracy %>% 
+  mutate(AE = abs(as.numeric(Value) - results_test_B),
+         APE = abs((as.numeric(Value) - results_test_B) / as.numeric(Value) * 100))
+
+paste0("Mean Absolute Error: ", mean(corn_test_B_accuracy$AE))
+
+paste0("Mean Absolute Percentage Error: ", mean(corn_test_B_accuracy$APE))
+
+
+```
+
+
+```{r}
+
+set.seed(320)
+
+# Recursive feature elimination with cross-validation
+X <- corn_test_A %>% dplyr::select(all_of(vars)) %>% mutate_all(as.numeric) %>% 
+  dplyr::select(-c(Value, Period, State, Data.Item, Code.x, Code.y, Code.x.x, Code.y.y))
+y <- corn_test_A %>% pull(Value) %>% as.numeric()
+
+# Define the control for RFE with time series cross-validation
+ctrl <- rfeControl(
+  functions = lmFuncs,
+  method = "cv",
+  number = 5,
+  verbose = FALSE
+)
+
+# Perform RFE with cross-validation
+rfecv <- rfe(
+  x = X,
+  y = y,
+  sizes = 1:ncol(X),
+  rfeControl = ctrl,
+  metric = "MAE"
+)
+
+# Extract optimal features
+optimal_features <- predictors(rfecv)
+cat("Optimal features:", optimal_features, "\n")
+cat("Number of optimal features:", rfecv$optVariables %>% length(), "\n")
+
+# Select optimal features for final model
+X_optimal <- X %>% dplyr::select(all_of(optimal_features))
+
+# Train final linear model
+final_model <- train(
+  x = X_optimal,
+  y = y,
+  method = "lm",
+  trControl = trainControl(method = "none")
+)
+
+# Make predictions and calculate metrics
+predictions <- predict(final_model, X_optimal)
+mae <- mean(abs(y - predictions))
+mape <- mean(abs((y - predictions) / y)) * 100
+
+paste0("Mean Absolute Error on training data:", mae)
+paste0("Mean Absolute Percentage Error on training data:", mape)
+
+final_model$finalModel
+
+summary(final_model)
+
+stargazer(final_model$finalModel, type = "text", digits = 2, title = "Linear Regression Results")
+
+
+```
+
+```{r}
+
+corn_test_A2 <- corn_test_A %>% cbind(predictions)
+
+corn_test_A2 %>% ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = predictions, color = "red")) + 
+  labs(title = "Model optimization - train set",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+
+
+
+```
+
+```{r}
+
+predictionsB <- predict(final_model, corn_test_B)
+
+corn_test_B_accuracy <- corn_test_B %>% cbind(predictionsB)
+
+corn_test_B_accuracy %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = predictionsB, colour = "Red")) + 
+  labs(title = "Model optimization - test set",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+#
+
+corn_test_B_accuracy <- corn_test_B_accuracy %>% 
+  mutate(AE = abs(as.numeric(Value) - predictionsB),
+         APE = abs((as.numeric(Value) - predictionsB) / as.numeric(Value) * 100))
+
+paste0("Mean Absolute Error: ", mean(corn_test_B_accuracy$AE))
+
+paste0("Mean Absolute Percentage Error: ", mean(corn_test_B_accuracy$APE))
+  
+
+```
+
+
+```{r}
+
+VA_select <- lm(Value ~ Jul_prec + Jul_prec_sq + Jul_sp01, corn_test_A)
+
+summary(VA_select)
+
+VA_test_A <- predict(VA_select, X_test)
+
+corn_VA_accuracy <- corn_test_A %>% cbind(VA_test_A)
+
+corn_VA_accuracy %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = results_test_A)) + 
+  labs(title = "Model selection - train test",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+
+results_VA_B <- predict(VA_select, corn_test_B)
+
+corn_VA_accuracy_B <- corn_test_B %>% cbind(results_VA_B)
+
+corn_VA_accuracy_B %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = results_test_B)) + 
+    labs(title = "Model selection - test set",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+
+```
+```{r}
+
+VA_select <- lm(Value ~ Year + Apr_prec + Apr_sp01 + Jun_sp01, corn_test_A)
+
+summary(VA_select)
+
+X_test = corn_test_A %>%  dplyr::select(Year, Apr_prec,  Apr_sp01, Jun_sp01)
+
+VA_test_A <- predict(VA_select, X_test)
+
+corn_VA_accuracy <- corn_test_A %>% cbind(VA_test_A)
+
+corn_VA_accuracy %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = results_test_A)) + 
+  labs(title = "Model selection - train test",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+
+results_VA_B <- predict(VA_select, corn_test_B)
+
+corn_VA_accuracy_B <- corn_test_B %>% cbind(results_VA_B)
+
+corn_VA_accuracy_B %>% 
+  ggplot(aes(x = Year, y = as.numeric(Value))) + 
+  geom_line() + 
+  geom_line(aes(y = results_test_B)) + 
+    labs(title = "Model selection - test set",
+       x = "Year",
+       y = "Yield (bu/ac)") + 
+  theme_classic()
+
+```
+
+# scenarios
+
+```{r}
+
+Apr_prec_sc <- ts(corn_test$Apr_prec, start = 1980, end = 2024)
+Apr_sp01_sc <- ts(corn_test$Apr_sp01, start = 1980, end = 2024)
+Jun_sp01_sc <- ts(corn_test$Jun_sp01, start = 1980, end = 2024)
+
+Apr_prec_model <- auto.arima(Apr_prec_sc)
+Apr_sp01_model <- auto.arima(Apr_sp01_sc)
+Jun_sp01_model <- auto.arima(Jun_sp01_sc)
+
+Apr_prec_fc <- forecast(Apr_prec_model, level = 95, h = 15)
+Apr_sp01_fc <- forecast(Apr_sp01_model, level = 95, h = 15)
+Jun_sp01_fc <- forecast(Jun_sp01_model, level = 95, h = 15)
+
+autoplot(Apr_prec_fc)
+autoplot(Apr_sp01_fc)
+autoplot(Jun_sp01_fc)
+
+
+```
+
+```{r}
+
+baseline <- data.frame(Year = seq(from = 2025, to = 2039, by = 1),
+                       Apr_prec = Apr_prec_fc$mean,
+                       Apr_sp01 = Apr_sp01_fc$mean,
+                       Jun_sp01 = Jun_sp01_fc$mean)
+
+high <- data.frame(Year = seq(from = 2025, to = 2039, by = 1),
+                   Apr_prec_fc$upper,
+                   Apr_sp01_fc$upper,
+                   Jun_sp01_fc$upper) %>% 
+  dplyr::rename("Apr_prec" = "X95.",
+                "Apr_sp01" = "X95..1",
+                "Jun_sp01" = "X95..2")
+
+low <- data.frame(Year = seq(from = 2025, to = 2039, by = 1),
+                  Apr_prec = Apr_prec_fc$lower,
+                  Apr_sp01 = Apr_sp01_fc$lower,
+                  Jun_sp01 = Jun_sp01_fc$lower) %>% 
+  dplyr::rename("Apr_prec" = "X95.",
+                "Apr_sp01" = "X95..1",
+                "Jun_sp01" = "X95..2")
+
+
+
+```
+
+```{r}
+
+baseline_result <- predict(VA_select, baseline)
+
+high_result <- predict(VA_select, high)
+
+low_result <- predict(VA_select, low)
+
+scenario_final <- data.frame(Year = seq(from = 2025, to = 2039, by = 1),
+                             Value = NA,
+                             baseline = baseline_result,
+                             high = high_result,
+                             low = low_result)
+
+historic <- corn_test %>% dplyr::select(Year, Value) %>% 
+  mutate(Value = as.numeric(Value),
+         baseline = NA,
+         high = NA,
+         low = NA)
+
+finaldf <- bind_rows(historic, scenario_final)
+
+finaldf %>% ggplot(aes(x = Year)) + 
+  geom_line(aes(y = Value)) + 
+  geom_line(aes(y = baseline, color = "baseline")) +
+  geom_line(aes(y = high, color = "High")) + 
+  geom_line(aes(y = low, color = "Low")) + 
+  labs(title = "VA corn yield scenarios",
+       x = "Year",
+       y = "Yield") + 
+  theme_classic()
+
+
+
+```
+
+**VAR Model**
+```{r}
+#DATASET IMPORT
+url <- "https://raw.githubusercontent.com/jtwhamond/VT-capstone-project/refs/heads/main/CapstoneData.csv?token=GHSAT0AAAAAADGUGLEL2JFNY5EUDZWTXFVS2ESE4NA"
+va.corn.data <- read.csv(url)
+```
+
+```{r}
+#create time series
+VA.YLD.RAW <- ts(va.corn.data$VA.YLD, start = 1980, end=2024, frequency = 1)
+VA.RPRICE.RAW <- ts(va.corn.data$REAL.VA.PRICE, start = 1980, end = 2024, frequency =1)
+```
+
+```{r}
+#Linear Regression Recap/Variable Significance
+temp.va.24 <- head(temp_va, -1)
+prec.va.24 <- head(prec_va, -1)
+sp01.va.24 <- head(sp01_va, -1)
+add_weather <- cbind(va.corn.data,temp.va.24,prec.va.24,sp01.va.24)
+add_weather$TREND <- seq_along(va.corn.data$YEAR) # create trend variable starting with count 1 = 1980
+```
+```{r}
+#Regression continued
+yld.reg.1 <- lm(VA.YLD ~ TREND + Apr_temp + Apr_prec + May_temp + May_prec + Jun_temp + Jun_prec + Jul_temp + Jul_prec + Aug_temp + Aug_prec + Sep_temp + Sep_prec 
+                +Sep_sp01 + Aug_sp01 + Jul_sp01 + Jun_sp01 + May_sp01, data = add_weather)
+stargazer(yld.reg.1,
+          type = "text",
+          report = "vcsp",
+          title = "VA Corn Yield Trend Model 1 - All Variables",
+          digits = 3,
+          style = "default",
+          intercept.bottom = FALSE)
+```
+```{r}
+#Model with selected variables - highest significance 
+yld.reg.2 <- lm(VA.YLD ~ TREND + Jun_sp01 + Jul_prec + I(Jul_prec^2) + Jul_sp01 + Aug_temp, data = add_weather)
+stargazer(yld.reg.2,
+          type = "text",
+          report = "vcsp",
+          title = "VA Corn Yield Trend Model 2 - Select Variables",
+          digits = 3,
+          style = "default",
+          intercept.bottom = FALSE)
+```
+Above models are on entire dataset. Need to train a model to perform well on unseen data.
+
+```{r}
+#Run model on a training set 1980 to 2014
+lr.train <- add_weather[add_weather$YEAR <= 2014, ]
+lr.test <- add_weather[add_weather$YEAR > 2014, ]
+```
+
+```{r}
+#Run Model Wide Open Again to Reassess significant variables
+yld.reg.3 <- lm(VA.YLD ~ TREND + Apr_temp + Apr_prec + May_temp + May_prec + Jun_temp + Jun_prec + Jul_temp + Jul_prec + Aug_temp + Aug_prec + Sep_temp + Sep_prec 
+                +Sep_sp01 + Aug_sp01 + Jul_sp01 + Jun_sp01 + May_sp01, data = lr.train)
+stargazer(yld.reg.3,
+          type = "text",
+          report = "vcsp",
+          title = "VA Corn Yield Trend Model 3 - All Variables on Train Set 1980-2014",
+          digits = 3,
+          style = "default",
+          intercept.bottom = FALSE)
+```
+Trend + Apr_prec + Jul_temp + Jul_prec + Aug_temp + Sep_temp + Sep_prec + Jul_sp01 + Sep_sp01 = significant 5% 
+
+
+```{r}
+#Trim Model by only including above significant variables
+yld.reg.4 <- lm(VA.YLD ~ TREND + Jun_sp01 + Jul_temp + Jul_prec + I(Jul_prec^2) + Aug_temp, data = lr.train) #MODEL USED FOR FORMAL TESTING VS VARX
+stargazer(yld.reg.4,
+          type = "text",
+          report = "vcsp",
+          title = "VA Corn Yield Trend Model 4 - Select Variables On Train Set 1980-2014",
+          digits = 3,
+          style = "default",
+          intercept.bottom = FALSE)
+```
+```{r}
+#Predict over Test Set
+test.yld.ts <- ts(lr.test$VA.YLD, start =2015, end = 2024)
+yld.fcast.test <- ts(predict(yld.reg.4, lr.test), start = 2015, end = 2024)
+autoplot(yld.fcast.test, series = "Linear Model - Virginia Corn Yields 2015-2024") +
+  autolayer(test.yld.ts, series = "Test Set Yield") +
+  labs(title = "Linear Regression Over Test Period 2015-2024", y = "Yield (BPA)") +
+  scale_color_manual(values = c("blue","black")) +
+  theme_minimal()
+
+```
+```{r}
+#Get errors 
+lin.reg.acc <- accuracy(yld.fcast.test, test.yld.ts)
+lr.RMSE <- lin.reg.acc["Test set", "RMSE"]
+lr.MAPE <- lin.reg.acc["Test set","MAPE"]
+lr.MSE <- lr.RMSE^2
+lr.acc <- c("MSE"=lr.MSE,"RMSE"=lr.RMSE, "MAPE"=lr.MAPE)
+knitr::kable(cbind('Lin. Reg'=lr.acc),
+             format.args = list(big.mark = ","),
+             caption = "Linear Model Accuracy")
+```
+
+
+#VARMODEL
+```{r}
+#data visuals
+c1 <- autoplot(VA.YLD.RAW) + labs(y="Bushels Per Acre", x = "Year", title = "Virginia Corn Yield 1980-2024") +geom_point()
+c2 <- ggAcf(VA.YLD.RAW)
+gridExtra::grid.arrange(c1,c2,ncol=1)
+```
+```{r}
+#test stationarity for yield
+VA.YLD.RAW %>% tseries::kpss.test()
+```
+P-value = 0.01, reject the null hypothesis of stationarity in data. Need to transform. 
+```{r}
+#Difference the Yield Data
+VA.YLD.D1 <- VA.YLD.RAW %>% diff()
+VA.YLD.D1 %>% autoplot()
+```
+```{r}
+#kpss test again 
+VA.YLD.D1 %>% tseries::kpss.test()
+VA.YLD.D1 %>% tseries::adf.test()
+```
+P-value = 0.10, fail to reject null hypothesis at 10% significance. Data is stationary and ready for VAR
+
+```{r}
+#repeat for real prices
+#visualization first
+c3 <- autoplot(VA.RPRICE.RAW) + labs(title = "Real Virginia Price Recieved For Corn 1980-2024", y= "$/Bushel", x ="Year") + geom_point()
+c4 <- ggAcf(VA.RPRICE.RAW)
+gridExtra::grid.arrange(c3,c4,ncol=1)
+```
+```{r}
+#KPSS test for stationarity 
+VA.RPRICE.RAW %>% tseries::kpss.test()
+VA.RPRICE.RAW %>% tseries::adf.test()
+```
+Data is stationary based on test p-values.
+```{r}
+#organize Y variables into correct length/split into training and test sets
+VA.RPRICE.2 <- window(VA.RPRICE.RAW, start = 1981)
+price.train <- window(VA.RPRICE.2, start = 1981, end = 2014)
+price.test <- window(VA.RPRICE.2, start = 2015, end = 2024)
+yld.train <- window(VA.YLD.D1, start = 1981, end=2014)
+yld.test <- window(VA.YLD.D1, start = 2015, end = 2024)
+Y.train <- cbind(yld.train, price.train)
+Y.test <- cbind(yld.test, price.test)
+X <- add_weather[, c("Jul_temp", "Jul_prec", "Aug_temp", "Jun_sp01","Jul_sp01")]
+X$Jul_prec2 <- X$Jul_prec^2
+
+```
+
+```{r}
+#test for stationarity among exogenous dataframe
+library(tseries)
+adf.test(X$Jul_prec)
+adf.test(X$Jul_prec2)
+adf.test(X$Jun_sp01)
+adf.test(X$Aug_temp)
+adf.test(X$Jul_sp01)
+adf.test(X$Jul_temp)
+
+```
+Jun_sp01, Aug_temp, Jul_temp not stationary. 
+
+```{r}
+#difference nonstationary series
+X.diff <- data.frame(
+Jun_sp01.diff <- diff(X$Jun_sp01),
+Aug_temp.diff <- diff(X$Aug_temp),
+Jul_temp.diff <- diff(X$Jul_temp))
+```
+```{r}
+#retest for stationarity 
+adf.test(X.diff$Jun_sp01.diff)
+adf.test(X.diff$Jul_temp.diff)
+adf.test(X.diff$Aug_temp.diff)
+```
+Data is stationary. 
+```{r}
+#combine into one exogenous dataframe
+X_stationary <- X[, c("Jul_prec","Jul_sp01","Jul_prec2")]
+X_stationary.cut <- X_stationary[-1,]
+exog <- cbind(X.diff,X_stationary.cut) #combine into now shortened dataframe, differencing drops 1980 from observations
+years <- 1981:2024
+exog <- data.frame(Year=years, exog)
+```
+```{r}
+#Split Exog into Training and Test Sets
+exog.train <- exog[exog$Year <= 2014,-1]
+exog.test <- exog[exog$Year > 2014, -1]
+
+```
+```{r}
+#RUN VARX Model
+library(vars)
+VARselect(Y.train, lag.max = 10, type = "const") #optimize VARX lag value, P
+```
+```{r}
+#continue VARX Model
+va.varx <- VAR(y=Y.train, p = 5  , exogen = exog.train, type = "const") ##VARX MODEL 
+summary(va.varx)
+```
+Going to stick with first estimation at this point, many variables are insignificant but are adding explanatory power i.e. higher adjusted R2
+
+```{r}
+#Plot VARX MODEL
+va.varx.fitted <- fitted(va.varx)
+va.varx.yld.fitted <- ts(va.varx.fitted[,1], start = 1986, end=2014, frequency =1)
+autoplot(yld.train, series = "Training Data") +
+  autolayer(va.varx.yld.fitted, series = "Fitted Values") +
+  labs(title = "Training Data with VARX Fitted Values", y = "Yield (BPA)") +
+  scale_color_manual(values = c("blue","black")) +
+  theme_minimal()
+
+```
+```{r}
+#Check Residuals
+var.x.resid <- residuals(va.varx)
+Box.test(var.x.resid[,"yld.train"], lag = 10, type = "Ljung-Box")
+```
+**Fail to reject** null hypothesis of no autocorrelation. Residuals resemble white noise. 
+
+```{r}
+#Forecast over Test Set
+VARX.FCast <- predict(va.varx, n.ahead = 10, dumvar = exog.test)
+YLD.FCast <- ts(VARX.FCast$fcst$yld.train[,"fcst"],start = 2015, end = 2024, frequency =1)
+#plot forecasts over test set
+autoplot(YLD.FCast, series = "Forecast Over Test Set") +
+  autolayer(yld.test, series = "Test Set-VA Corn Yields 2015-2024") +
+  labs(title = "Estimation Over Test Data", y = "Yield (BPA)") +
+  scale_color_manual(values = c("blue","black")) +
+  theme_minimal()
+```
+```{r}
+#Model Accuracy over Test set
+varx.accuracy <- accuracy(YLD.FCast,yld.test)
+varx.RMSE <- varx.accuracy["Test set","RMSE"]
+varx.MSE <- varx.RMSE^2
+varx.MAPE <- varx.accuracy["Test set","MAPE"]
+varx.acc <- c("MSE"=varx.MSE,"RMSE"=varx.RMSE,"MAPE"=varx.MAPE)
+knitr::kable(cbind('VARX'=varx.acc),
+             format.args = list(big.mark=","),
+             caption = "Model Accuracy Comparison")
+```
+
+
+**LINEAR MODEL VS VARX FOR YIELD PREDICTION OVER TEST SET**
+```{r}
+knitr::kable(cbind('Linear Regression'=lr.acc,'VARX' = varx.acc),
+             format.args = list(big.mark=","),
+             caption = "Model Accuracy Comparison")
+```
+```{r}
+#Graph competing Models over Test Set
+autoplot(yld.test.window, series = "Test Set-VA Corn Yields 2015-2024") +
+  autolayer(yld.fcast.test, series= "Linear Regression Forecast Over Test Set")+
+  autolayer(undiff.yld.fcast, series = "VARX Forecast Over Test Set") +
+  labs(title = "Estimation Over Test Data", y = "Yield (BPA)") +
+  scale_color_manual(values = c("blue","black","red")) +
+  theme_minimal()
+  
+```
+
+
+```{r}
+#Reverse differencing to clearly see forecasts 
+yld.train.window <- window(VA.YLD.RAW, start = 1980, end = 2014)
+yld.test.window <- window(VA.YLD.RAW, start = 2015, end = 2024)
+yld.2014 <- tail(yld.train.window, 1)
+undiff.yld.fcast <- cumsum(YLD.FCast) + as.numeric(yld.2014)
+undiff.yld.fcast <- ts(undiff.yld.fcast, start = 2015, frequency =1)
+```
+```{r}
+#Plot Yield Forecasts - Complete Bushels per Acre
+autoplot(undiff.yld.fcast, series = "Forecast Over Test Set") +
+  autolayer(yld.test.window, series = "Test Set-VA Corn Yields 2015-2024") +
+  labs(title = "VARX Estimation Over Test Data", y = "Yield (BPA)") +
+  scale_color_manual(values = c("blue","black")) +
+  theme_minimal()+ theme(legend.position = "bottom")
+```
+```{r}
+#Forecast Next 10 years of yields 
+url2 <- "https://raw.githubusercontent.com/jtwhamond/VT-capstone-project/refs/heads/main/10Y%20Rolling%20Average%20Weather%20Variables%20For%2010%20Year%20Forecast.csv?token=GHSAT0AAAAAADGUGLELSOOY4IU2E5DKFNNK2ESE62A"
+exog.rolling.avg <- read.csv(url2) #upload dataset made in excel for 10 year rolling average of weather variables
+```
+```{r}
+exog.fcast <- exog.rolling.avg[exog.rolling.avg$Year >= 2015,-1]
+names(exog.fcast)[names(exog.fcast)=="Jun_sp01.diff"]<- "Jun_sp01.diff....diff.X.Jun_sp01."  #rename some columns so they match the original model estimation.
+names(exog.fcast)[names(exog.fcast)=="Aug_temp.diff"]<- "Aug_temp.diff....diff.X.Aug_temp."
+names(exog.fcast)[names(exog.fcast)=="Jul_temp.diff"]<- "Jul_temp.diff....diff.X.Jul_temp."
+names(exog.fcast)[names(exog.fcast)=="July_prec"]<- "Jul_prec"
+VARX.FCast.10Y <- predict(va.varx, n.ahead = 20, dumvar = exog.fcast)
+```
+```{r}
+YLD.FCast.10Y <- ts(VARX.FCast.10Y$fcst$yld.train[,"fcst"],start = 2015, end = 2034, frequency =1)
+undiff.yld.fcast2  <- cumsum(YLD.FCast.10Y) + as.numeric(yld.2014)
+undiff.yld.fcast2 <- ts(undiff.yld.fcast2, start = 2015, frequency =1)
+
+#Plot forecasts over test and 10 years into the future
+autoplot(undiff.yld.fcast2, series = "Model Forecast") +
+  autolayer(VA.YLD.RAW, series = "VA Corn Yields 1980-2024") +
+  labs(title = "Estimation Over Test Data Plus 10 Year Forecast", y = "Yield (BPA)") +
+  scale_color_manual(values = c("blue","black")) +
+  theme_minimal() + theme(legend.position = "bottom")
+```
+
+```{r}
+# Load county-level weather data from Excel
+url3 <- "https://raw.githubusercontent.com/jtwhamond/VT-capstone-project/refs/heads/main/County%20Level%20Weather%20Data%20CSV.csv?token=GHSAT0AAAAAADGUGLEL4TRM36Z6KBRRWYMC2ESE7OQ"
+
+weather_raw <- read.csv(url3)
+
+# Map station names to counties
+station_to_county <- tribble(
+  ~station_name,                      ~county,
+  "DALE ENTERPRISE",                 "ROCKINGHAM",
+  "STAUNTON WATER TREATMENT PLANT", "AUGUSTA",
+  "HOLLAND 1 E",                     "SOUTHAMPTON",
+  "ONLEY0.6 SE",                     "ACCOMACK",
+  "WALKERTON 2 NW",                  "ESSEX",
+  "MANASSAS",                        "FAUQUIER",
+  "ROCKY MOUNT",                     "FRANKLIN",
+  "MONTROSS 5.2 ESE",                "WESTMORELAND",
+  "SUFFOLK 13.9 NNE",                "SUFFOLK CITY",
+  "HEATHSVILLE 4.6 SE",              "NORTHUMBERLAND"
+)
+
+# Clean and prepare weather data
+library(lubridate)
+
+weather_clean <- weather_raw %>%
+  mutate(
+    station_name = str_remove(NAME, ", VA US") |> toupper(),
+    date = as.Date(DATE, format = "%m/%d/%Y"),
+    year = year(date),
+    month = month(date),
+    tmax_F = TMAX,
+    tmin_F = TMIN,
+    prcp_inches = PRCP / 100
+  ) %>%
+  left_join(station_to_county, by = "station_name") %>%
+  filter(!is.na(county), month %in% 4:8, year >= 1980)
+```
+
+
+```{r}
+# Summarize heat metrics per county and year
+county_weather_metrics <- weather_clean %>%
+  filter(month %in% 4:8) %>%
+  group_by(county, year) %>%
+  summarise(
+    avg_temp_Jul = mean(tmax_F[month == 7], na.rm = TRUE),
+    avg_precip_Jul = sum(prcp_inches[month == 7], na.rm = TRUE),
+    total_hot_days = sum(tmax_F >= 94, na.rm = TRUE),
+    avg_extreme_temp = mean(tmax_F[tmax_F >= 94], na.rm = TRUE),
+    mod_temp_days = sum(tmax_F < 91.4, na.rm = TRUE),
+    extreme_temp_days = sum(tmax_F >= 91.4, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+```{r}
+url4 <- "https://raw.githubusercontent.com/jtwhamond/VT-capstone-project/refs/heads/main/County%20Weights%20CSV.csv?token=GHSAT0AAAAAADGUGLELNJIV2YWLXPVLUBRC2ESE7ZA"
+weights_df <- read.csv(url4) %>%
+  clean_names() %>% 
+  rename(
+    acres_planted = acres_planted_1980_2024,
+    percent_state_total = percent_of_state_total
+  ) %>%
+  mutate(
+    county = toupper(trimws(county)),
+    percent_state_total = as.numeric(str_remove(percent_state_total, "%")),
+    weight = percent_state_total / 100
+  )
+```
+
+```{r}
+weights_df <- weights_df %>%
+  filter(!is.na(weight))
+```
+
+```{r}
+county_weather_metrics <- county_weather_metrics %>%
+  mutate(county = toupper(trimws(county)))
+
+weights_df <- weights_df %>%
+  mutate(county = toupper(trimws(county)))
+```
+
+```{r}
+# Join acreage weights
+county_weather_metrics <- left_join(county_weather_metrics, weights_df, by = "county")
+
+lr.train <- lr.train[, !duplicated(names(lr.train))]
+
+# Create weighted averages across counties
+weather_state_weighted <- county_weather_metrics %>%
+  group_by(year) %>%
+  summarise(across(
+    .cols = c(total_hot_days, avg_extreme_temp, avg_precip_Jul,
+              avg_temp_Jul, mod_temp_days, extreme_temp_days),
+    .fns = ~ sum(.x * weight, na.rm = TRUE),
+    .names = "weighted_{.col}"
+  ), .groups = "drop")
+```
+
+
+```{r}
+lr.train <- left_join(lr.train, weather_state_weighted %>% rename(YEAR = year), by = "YEAR")
+```
+
+
+
+```{r}
+yld.reg.5 <- lm(VA.YLD ~ TREND +
+                         Jun_sp01 +
+                         Jul_prec + I(Jul_prec^2) +
+                         weighted_avg_temp_Jul +
+                         weighted_total_hot_days,
+               data = lr.train) #MODEL USED FOR FORMAL TESTING VS VARX
+stargazer(yld.reg.5,
+          type = "text",
+          report = "vcsp",
+          title = "VA Corn Yield Trend Model 4 - Select Variables On Train Set 1980-2014",
+          digits = 3,
+          style = "default",
+          intercept.bottom = FALSE)
+```
+
+
+```{r}
+yld.reg.7 <- lm(VA.YLD ~ TREND +
+                              Jun_sp01 +
+                              Jul_prec + I(Jul_prec^2) +
+                              weighted_total_hot_days,
+                    data = lr.train)
+stargazer(yld.reg.7,
+          type = "text",
+          report = "vcsp",
+          title = "VA Corn Yield Trend Model 4 - Select Variables On Train Set 1980-2014",
+          digits = 3,
+          style = "default",
+          intercept.bottom = FALSE)
+```
+
